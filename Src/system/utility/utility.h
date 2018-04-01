@@ -1,0 +1,21 @@
+#ifndef __myutility__
+#define __myutility__
+#include "stm32f10x.h"
+
+extern char* str_simplify(char*);
+extern u8 simplify_sim800c_responding_str(char* str);
+
+extern u8 wait_uart1_rx_data(u16 waitting_ms);
+extern u8 wait_uart2_rx_data(u16 waitting_ms);
+
+
+#define READ_RX 0
+#define CHECK_RX 1
+extern u8 uart1_rx_data(char* rx_data,u8 only_checking_data);
+extern u8 uart2_rx_data(char* rx_data, u8 only_checking_data);
+extern void uart1_rx_buf_clear(void);
+extern void uart2_rx_buf_clear(void);
+
+
+
+#endif

@@ -1,0 +1,214 @@
+/*******************************************************************************
+ * Copyright (c) 2014 IBM Corp.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Eclipse Distribution License v1.0 which accompany this distribution.
+ *
+ * The Eclipse Public License is available at
+ *    http://www.eclipse.org/legal/epl-v10.html
+ * and the Eclipse Distribution License is available at
+ *   http://www.eclipse.org/org/documents/edl-v10.php.
+ *
+ * Contributors:
+ *    Ian Craggs - initial API and implementation and/or initial documentation
+ *    Sergio R. Caprile - clarifications and/or documentation extension
+ *******************************************************************************/
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+#include "MQTTPacket.h"
+#include "transport.h"
+#include "debug.h"
+#include "delay.h"
+
+/* This is in order to get an asynchronous signal to stop the sample,
+as the code loops waiting for msgs on the subscribed topic.
+Your actual code will depend on your hw and approach*/
+#include <signal.h>
+
+int toStop = 0;
+
+/* */
+	MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
+	int rc = 0;
+	int mysock = -1;
+	unsigned char buf[200];
+	int buflen = sizeof(buf);
+	int msgid = 1;
+	MQTTString sub_topicString = MQTTString_initializer;
+	MQTTString pub_topicString = MQTTString_initializer;
+	int req_qos = 0;
+	int count = 0;
+	char payload[20];// = "mypayload";
+	int len = 0;
+	char *host = "39.108.59.249";
+	int port = 1883;
+//int port = 8089;
+int subscribe = -1;
+int connected = -1;
+
+
+int open_socket()
+{
+	mysock = transport_open(host, port);
+	if (mysock < 0) {
+		ERROR("[MQTT] Failed to open hostname %s port %d\r\n", host, port);
+		return 0;
+	}
+
+	INFO("[MQTT] Open hostname %s port %d successfully\r\n", host, port);
+	return 1;
+}
+
+void close_socket()
+{
+	transport_close(mysock);
+	mysock = -1;
+	subscribe = -1;
+	connected = -1;
+}
+
+void mqtt_disconnect()
+{
+	len = MQTTSerialize_disconnect(buf, buflen);
+	rc = transport_sendPacketBuffer(mysock, buf, len);
+	close_socket();
+}
+
+int connect_mqtt_server()
+{
+	if (mysock < 0) {
+		ERROR("[MQTT] Failed to connect to mqtt server, hostname %s port %d is not opened\r\n", host, port);
+		return 0;
+	}
+
+	data.clientID.cstring = "me";
+	data.keepAliveInterval = 3600;
+	data.cleansession = 1;
+	data.username.cstring = "testuser";
+	data.password.cstring = "testpassword";
+
+	len = MQTTSerialize_connect(buf, buflen, &data);
+
+	INFO("[MQTT] Connecting to mqtt server\r\n");
+	rc = transport_sendPacketBuffer(mysock, buf, len);
+
+	/* wait for connack */
+	if (MQTTPacket_read(buf, buflen, transport_getdata) == CONNACK)
+	{
+		unsigned char sessionPresent, connack_rc;
+
+		if (MQTTDeserialize_connack(&sessionPresent, &connack_rc, buf, buflen) != 1 || connack_rc != 0)
+		{
+			ERROR("[MQTT] Unable to connect to mqtt server, return code %d\n", connack_rc);
+			return 0;
+		}
+	}
+	else
+		return 0;
+
+	INFO("[MQTT] Connected to mqtt server successfully\r\n");
+	connected = 1;
+	return 1;
+}
+
+int mqtt_subscribe()
+{
+	if (mysock < 0) {
+		ERROR("[MQTT] Failed to subscribe, hostname %s port %d is not opened\r\n", host, port);
+		return 0;
+	}
+	if (connected < 0) {
+		ERROR("[MQTT] Failed to subscribe, mqtt server %s:%d is not connected\r\n", host, port);
+		return 0;
+	}
+	/* subscribe */
+	sub_topicString.cstring = "wechat2endpoint";
+	len = MQTTSerialize_subscribe(buf, buflen, 0, msgid, 1, &sub_topicString, &req_qos);
+
+	INFO("[MQTT] Subscribing topic \"%s\"\r\n", sub_topicString.cstring);
+	rc = transport_sendPacketBuffer(mysock, buf, len);
+	if (MQTTPacket_read(buf, buflen, transport_getdata) == SUBACK) 	/* wait for suback */
+	{
+		unsigned short submsgid;
+		int subcount;
+		int granted_qos;
+
+		rc = MQTTDeserialize_suback(&submsgid, 1, &subcount, &granted_qos, buf, buflen);
+		if (granted_qos != 0)
+		{
+			ERROR("granted qos != 0, %d\r\n", granted_qos);
+			goto exit;
+		}
+	}
+	else
+		goto exit;
+
+	subscribe = 1;
+	INFO("[MQTT] Subscribe OK\r\n");
+	return 1;
+
+exit:
+	ERROR("[MQTT] Failed to subscribe\r\n");
+	//close_socket();
+	subscribe = 0;
+	return 0;
+}
+
+int listen_sub_data(void (*cb)(unsigned char*, int))
+{
+	if (mysock >= 0 && subscribe)
+	{
+		if (MQTTPacket_read(buf, buflen, transport_getdata) == PUBLISH)
+		{
+			unsigned char dup;
+			int qos;
+			unsigned char retained;
+			unsigned short msgid;
+			int payloadlen_in;
+			unsigned char* payload_in;
+			MQTTString receivedTopic;
+
+			rc = MQTTDeserialize_publish(&dup, &qos, &retained, &msgid, &receivedTopic,
+					&payload_in, &payloadlen_in, buf, buflen);
+			INFO("subscribed message arrived %.*s\r\n", payloadlen_in, payload_in);
+			if (cb) {
+				(*cb)(payload_in, payloadlen_in);
+			}
+			return 1;
+		}
+		return 0;
+	}
+	return -1;
+}
+
+int mqtt_publish_data(char* str)
+{
+	if (mysock < 0 || connected < 0) return -1;
+
+	sprintf(payload, "[%d] %s", ++count, str);
+	INFO("publish: \"%s\"\r\n", payload);
+	pub_topicString.cstring = "endpoint2wechat";
+	len = MQTTSerialize_publish(buf, buflen, 0, 0, 0, 0, pub_topicString, (unsigned char*)payload, strlen(payload));
+	rc = transport_sendPacketBuffer(mysock, buf, len);
+	return 1;
+}
+
+void mqtt_ping()
+{
+	if (mysock < 0) return;
+	
+	len = MQTTSerialize_pingreq(buf, buflen);
+	transport_sendPacketBuffer(mysock, buf, len);
+	INFO("Ping...");
+	if (MQTTPacket_read(buf, buflen, transport_getdata) == PINGRESP){
+		INFO("Pong\r\n");
+	}
+	else {
+		INFO("OOPS\r\n");
+		//goto exit;
+	}
+}

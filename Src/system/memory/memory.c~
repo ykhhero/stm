@@ -1,0 +1,12 @@
+#include "memory.h"
+
+char memorys[PAGE_NUM * PAGE_SIZE];
+memory_pg0 = memorys;
+memory_pg1 = memory_pg0 + PAGE_SIZE ;
+memory_pg2 = memory_pg1 + PAGE_SIZE ;
+memory_pg3 = memory_pg2 + PAGE_SIZE ;
+memory_pg4 = memory_pg3 + PAGE_SIZE ;
+memory_pg5 = memory_pg4 + PAGE_SIZE ;
+memory_pg6 = memory_pg5 + PAGE_SIZE ;
+memory_pg7 = memory_pg6 + PAGE_SIZE ;
+

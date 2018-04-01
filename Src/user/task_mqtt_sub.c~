@@ -1,0 +1,18 @@
+#define LED0_TASK_PRIO       			7 
+#define LED0_STK_SIZE  		    		64
+OS_STK LED0_TASK_STK[LED0_STK_SIZE];
+void led0_task(void *pdata);
+//LED0хннЯ
+u16 cnt1 = 0;
+void led0_task(void *pdata)
+{	 	
+	while(1)
+	{
+		LED0=0;
+		delay_ms(500);
+		LED0=1;
+		delay_ms(500);
+		fprintf(UART1_FILE, "led0 task %ds\r\n", ++cnt1);
+	};
+}
+
